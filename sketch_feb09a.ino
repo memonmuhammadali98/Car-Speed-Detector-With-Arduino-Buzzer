@@ -1,0 +1,113 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+#define SENSOR_1_PIN 2
+#define SENSOR_2_PIN 3
+#define BUZZER_PIN 8
+
+volatile unsigned long timeSensor1 = 0;
+volatile unsigned long timeSensor2 = 0;
+volatile bool sensor1Triggered = false;
+volatile bool sensor2Triggered = false;
+
+const float distanceBetweenSensors = 0.1; // meters
+float speed = 0;
+unsigned long lastDetectionTime = 0;
+const unsigned long resetDelay = 2000; // 2 sec
+
+// For non-blocking buzzer beep
+unsigned long lastBuzzerTime = 0;
+const unsigned long buzzerInterval = 100; // fast beep interval (ms)
+bool buzzerState = false;
+bool objectDetected = false;
+
+void sensor1ISR();
+void sensor2ISR();
+
+void setup() {
+  lcd.begin(16, 2);
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Speed Detector");
+  delay(2000);
+  lcd.clear();
+  
+  pinMode(SENSOR_1_PIN, INPUT);
+  pinMode(SENSOR_2_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, HIGH); // HIGH kar ke dekho (inverted logic test)
+  
+  attachInterrupt(digitalPinToInterrupt(SENSOR_1_PIN), sensor1ISR, RISING);
+  attachInterrupt(digitalPinToInterrupt(SENSOR_2_PIN), sensor2ISR, RISING);
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+  
+  // --- Calculate speed if sensors triggered ---
+  if (sensor1Triggered && sensor2Triggered) {
+    sensor1Triggered = false;
+    sensor2Triggered = false;
+    
+    unsigned long timeDiff = abs(timeSensor2 - timeSensor1);
+    if (timeDiff > 0) {
+      speed = distanceBetweenSensors / (timeDiff / 1000000.0);
+      lastDetectionTime = currentMillis;
+      objectDetected = true;
+    }
+  }
+  
+  // --- Reset speed after inactivity ---
+  if (currentMillis - lastDetectionTime > resetDelay) {
+    speed = 0;
+    objectDetected = false;
+  }
+  
+  // --- Display speed ---
+  lcd.setCursor(0, 0);
+  lcd.print("Speed: ");
+  lcd.print(speed, 2);
+  lcd.print(" m/s   ");
+  
+  // --- Display category ---
+  lcd.setCursor(0, 1);
+  if (speed > 0 && speed < 50) {
+    lcd.print("LOW SPEED       ");
+  } else if (speed >= 50 && speed < 80) {
+    lcd.print("NORMAL SPEED    ");
+  } else if (speed >= 80) {
+    lcd.print("HIGH SPEED !!!  ");
+  } else {
+    lcd.print("                ");
+  }
+  
+  // --- Buzzer control (INVERTED LOGIC) ---
+  if (objectDetected && speed > 0) {
+    if (currentMillis - lastBuzzerTime >= buzzerInterval) {
+      lastBuzzerTime = currentMillis;
+      buzzerState = !buzzerState;
+      digitalWrite(BUZZER_PIN, buzzerState ? LOW : HIGH); // INVERTED!
+    }
+  } else {
+    digitalWrite(BUZZER_PIN, HIGH); // HIGH = OFF
+    buzzerState = false;
+  }
+  
+  delay(20);
+}
+
+// --- ISR functions ---
+void sensor1ISR() {
+  if (!sensor1Triggered) {
+    timeSensor1 = micros();
+    sensor1Triggered = true;
+  }
+}
+
+void sensor2ISR() {
+  if (!sensor2Triggered) {
+    timeSensor2 = micros();
+    sensor2Triggered = true;
+  }
+}
